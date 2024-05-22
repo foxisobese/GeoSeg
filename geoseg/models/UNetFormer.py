@@ -6,6 +6,8 @@ from einops import rearrange, repeat
 from timm.models.layers import DropPath, to_2tuple, trunc_normal_
 import timm
 
+import torch.quantization as quantization
+
 
 class ConvBNReLU(nn.Sequential):
     def __init__(self, in_channels, out_channels, kernel_size=3, dilation=1, stride=1, norm_layer=nn.BatchNorm2d, bias=False):
@@ -374,3 +376,65 @@ class UNetFormer(nn.Module):
         else:
             x = self.decoder(res1, res2, res3, res4, h, w)
             return x
+
+"""
+quantization part - foxisobese
+"""
+
+# define a wrapper
+class QuantizedUNetFormer(UNetFormer):
+    def _init_(self, *args, **kwargs):
+        super(QuantizedUNetFormer, self)._init_(*args, **kwargs)
+        self.quant = quantization.QuantStub()
+        self.dequant = quantization.DeQuantSub()
+    
+    def forward(self, x):
+        x = self.quant(x)
+        x = super(QuantizedUNetFormer, self).forward(x)
+        x = self.dequant(x)
+        return x
+    
+# define a fuse function
+def fuse_model(model):
+    for m in model.modules():
+        if isinstance(m, ConvBNReLU) or isinstance(m, ConvBN) or isinstance(m, SeparableConvBNReLU) or isinstance(m, SeparableConvBN):
+            torch.quantization.fuse_modules(m, ['0', '1', '2'], inplace=True)
+        elif isinstance(m, SeparableConv):
+            torch.quantization.fuse_modules(m, ['0', '1'], inplace=True)
+        elif isinstance(m, Mlp):
+            torch.quantization.fuse_modules(m, ['fc1', 'act'], inplace=True)
+        elif isinstance(m, Block):
+            torch.quantization.fuse_modules(m, ['norm1', 'attn'], inplace=True)
+            torch.quantization.fuse_modules(m, ['norm2', 'mlp'], inplace=True)
+
+# define calbiration
+def calibrate(model, data_loader):
+    model.eval()
+    with torch.no_grad():
+        for inputs in data_loader:
+            model(inputs)
+
+# instantiate the quantized model and fuse it
+# perform a static quantization
+# (although dynamic quantization best fits this model, it is unprovided in Pytorch for this model architecture)
+model = QuantizedUNetFormer()
+model.eval()
+
+fuse_model(model)
+model.qconfig = torch.quantization.get_default_qconfig('fbgemm')
+
+torch.quantization.prepare(model, inplace = True)
+
+# calibrate the model with random data
+# (in practice, representative dataset is desired for calibration)
+calibration_data_loader = [torch.rand(1, 3, 224, 224) for _ in range(10)]
+calibrate(model, calibration_data_loader)
+
+# here is your quantized model!
+torch.quantization.convert(model, inplace=True)
+
+# Test the quantized model
+# (in practice, test the model with actual test data)
+example_input = torch.rand(1, 3, 224, 224)
+output = model(example_input)
+print(output)
