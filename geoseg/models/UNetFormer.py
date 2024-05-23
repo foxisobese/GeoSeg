@@ -198,7 +198,6 @@ class Block(nn.Module):
         self.norm2 = norm_layer(dim)
 
     def forward(self, x):
-
         x = x + self.drop_path(self.attn(self.norm1(x)))
         x = x + self.drop_path(self.mlp(self.norm2(x)))
 
@@ -389,10 +388,11 @@ class QuantizedUNetFormer(UNetFormer):
     
     def forward(self, x):
         x = self.quant(x)
-        x = super(QuantizedUNetFormer, self).forward(x)
+        res1, res2, res3, res4 = self.backbone(x)
+        x = self.decoder(res1, res2, res3, res4, x.size(2), x.size(3))
         x = self.dequant(x)
         return x
-
+    
 # define calbiration
 def calibrate(model, data_loader):
     model.eval()
@@ -407,8 +407,7 @@ model = QuantizedUNetFormer()
 model.eval()
 
 model.qconfig = torch.quantization.get_default_qconfig('fbgemm')
-
-torch.quantization.prepare(model, inplace=True)
+torch.quantization.prepare(model, inplace = True)
 
 # calibrate the model with random data
 # (in practice, representative dataset is desired for calibration)
