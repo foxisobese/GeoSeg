@@ -397,9 +397,9 @@ class QuantizedUNetFormer(UNetFormer):
 # define a fuse function
 def fuse_model(model):
     for m in model.modules():
-        if isinstance(m, ConvBNReLU) or isinstance(m, ConvBN) or isinstance(m, SeparableConvBNReLU) or isinstance(m, SeparableConvBN):
+        if isinstance(m, ConvBNReLU) or isinstance(m, SeparableConvBNReLU) or isinstance(m, SeparableConvBN):
             torch.quantization.fuse_modules(m, ['0', '1', '2'], inplace=True)
-        elif isinstance(m, SeparableConv):
+        elif isinstance(m, SeparableConv) or isinstance(m, ConvBN):
             torch.quantization.fuse_modules(m, ['0', '1'], inplace=True)
         elif isinstance(m, Mlp):
             torch.quantization.fuse_modules(m, ['fc1', 'act'], inplace=True)
