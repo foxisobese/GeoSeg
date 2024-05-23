@@ -110,13 +110,13 @@ class GlobalLocalAttention(nn.Module):
     def pad(self, x, ps):
         _, _, H, W = x.size()
         if W % ps != 0:
-            x = F.pad(x, (0, ps - W % ps), mode='reflect')
+            x = F.pad(x, (0, ps - W % ps), mode='constant')
         if H % ps != 0:
-            x = F.pad(x, (0, 0, 0, ps - H % ps), mode='reflect')
+            x = F.pad(x, (0, 0, 0, ps - H % ps), mode='constant')
         return x
 
     def pad_out(self, x):
-        x = F.pad(x, pad=(0, 1, 0, 1), mode='reflect')
+        x = F.pad(x, pad=(0, 1, 0, 1), mode='constant')
         return x
 
     def forward(self, x):
@@ -145,8 +145,8 @@ class GlobalLocalAttention(nn.Module):
 
         attn = attn[:, :, :H, :W]
 
-        out = self.attn_x(F.pad(attn, pad=(0, 0, 0, 1), mode='reflect')) + \
-              self.attn_y(F.pad(attn, pad=(0, 1, 0, 0), mode='reflect'))
+        out = self.attn_x(F.pad(attn, pad=(0, 0, 0, 1), mode='constant')) + \
+              self.attn_y(F.pad(attn, pad=(0, 1, 0, 0), mode='constant'))
 
         out = out + local
         out = self.pad_out(out)
