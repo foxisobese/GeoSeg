@@ -407,13 +407,7 @@ def fuse_model(model):
             torch.quantization.fuse_modules(m, ['0', '1', '2'], inplace=True)
         elif isinstance(m, SeparableConv):
             torch.quantization.fuse_modules(m, ['0', '1'], inplace=True)
-        elif isinstance(m, Mlp):
-            torch.quantization.fuse_modules(m, ['fc1', 'act'], inplace=True)
-        # Skip fusion for GlobalLocalAttention as it's not supported
-        elif isinstance(m, Block):
-            torch.quantization.fuse_modules(m, ['norm1', 'attn'], inplace=True)
-            # Skip fusing norm2 and mlp since it's not supported
-
+        # Skip fusion for GlobalLocalAttention and unsupported fusions in Block
 
 
 # define calbiration
