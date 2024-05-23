@@ -6,6 +6,9 @@ from einops import rearrange, repeat
 from timm.models.layers import DropPath, to_2tuple, trunc_normal_
 import timm
 
+import torch.quantization as quantization
+
+
 class ConvBNReLU(nn.Sequential):
     def __init__(self, in_channels, out_channels, kernel_size=3, dilation=1, stride=1, norm_layer=nn.BatchNorm2d, bias=False):
         super(ConvBNReLU, self).__init__(
@@ -15,6 +18,7 @@ class ConvBNReLU(nn.Sequential):
             nn.ReLU6()
         )
 
+
 class ConvBN(nn.Sequential):
     def __init__(self, in_channels, out_channels, kernel_size=3, dilation=1, stride=1, norm_layer=nn.BatchNorm2d, bias=False):
         super(ConvBN, self).__init__(
@@ -23,12 +27,14 @@ class ConvBN(nn.Sequential):
             norm_layer(out_channels)
         )
 
+
 class Conv(nn.Sequential):
     def __init__(self, in_channels, out_channels, kernel_size=3, dilation=1, stride=1, bias=False):
         super(Conv, self).__init__(
             nn.Conv2d(in_channels, out_channels, kernel_size=kernel_size, bias=bias,
                       dilation=dilation, stride=stride, padding=((stride - 1) + dilation * (kernel_size - 1)) // 2)
         )
+
 
 class SeparableConvBNReLU(nn.Sequential):
     def __init__(self, in_channels, out_channels, kernel_size=3, stride=1, dilation=1,
@@ -42,6 +48,7 @@ class SeparableConvBNReLU(nn.Sequential):
             nn.ReLU6()
         )
 
+
 class SeparableConvBN(nn.Sequential):
     def __init__(self, in_channels, out_channels, kernel_size=3, stride=1, dilation=1,
                  norm_layer=nn.BatchNorm2d):
@@ -53,6 +60,7 @@ class SeparableConvBN(nn.Sequential):
             nn.Conv2d(in_channels, out_channels, kernel_size=1, bias=False)
         )
 
+
 class SeparableConv(nn.Sequential):
     def __init__(self, in_channels, out_channels, kernel_size=3, stride=1, dilation=1):
         super(SeparableConv, self).__init__(
@@ -61,6 +69,7 @@ class SeparableConv(nn.Sequential):
                       groups=in_channels, bias=False),
             nn.Conv2d(in_channels, out_channels, kernel_size=1, bias=False)
         )
+
 
 class Mlp(nn.Module):
     def __init__(self, in_features, hidden_features=None, out_features=None, act_layer=nn.ReLU6, drop=0.):
@@ -79,6 +88,7 @@ class Mlp(nn.Module):
         x = self.fc2(x)
         x = self.drop(x)
         return x
+
 
 class GlobalLocalAttention(nn.Module):
     def __init__(self,
@@ -174,6 +184,7 @@ class GlobalLocalAttention(nn.Module):
 
         return out
 
+
 class Block(nn.Module):
     def __init__(self, dim=256, num_heads=16,  mlp_ratio=4., qkv_bias=False, drop=0., attn_drop=0.,
                  drop_path=0., act_layer=nn.ReLU6, norm_layer=nn.BatchNorm2d, window_size=8):
@@ -193,6 +204,7 @@ class Block(nn.Module):
 
         return x
 
+
 class WF(nn.Module):
     def __init__(self, in_channels=128, decode_channels=128, eps=1e-8):
         super(WF, self).__init__()
@@ -209,6 +221,7 @@ class WF(nn.Module):
         x = fuse_weights[0] * self.pre_conv(res) + fuse_weights[1] * x
         x = self.post_conv(x)
         return x
+
 
 class FeatureRefinementHead(nn.Module):
     def __init__(self, in_channels=64, decode_channels=64):
@@ -246,7 +259,9 @@ class FeatureRefinementHead(nn.Module):
 
         return x
 
+
 class AuxHead(nn.Module):
+
     def __init__(self, in_channels=64, num_classes=8):
         super().__init__()
         self.conv = ConvBNReLU(in_channels, in_channels)
@@ -259,6 +274,7 @@ class AuxHead(nn.Module):
         feat = self.conv_out(feat)
         feat = F.interpolate(feat, size=(h, w), mode='bilinear', align_corners=False)
         return feat
+
 
 class Decoder(nn.Module):
     def __init__(self,
@@ -332,6 +348,7 @@ class Decoder(nn.Module):
                 if m.bias is not None:
                     nn.init.constant_(m.bias, 0)
 
+
 class UNetFormer(nn.Module):
     def __init__(self,
                  decode_channels=64,
@@ -365,10 +382,10 @@ quantization part - foxisobese
 
 # define a wrapper
 class QuantizedUNetFormer(UNetFormer):
-    def _init_(self, *args, **kwargs):
-        super(QuantizedUNetFormer, self)._init_(*args, **kwargs)
-        self.quant = torch.quantization.QuantStub()
-        self.dequant = torch.quantization.DeQuantStub()
+    def __init__(self, *args, **kwargs):
+        super(QuantizedUNetFormer, self).__init__(*args, **kwargs)
+        self.quant = quantization.QuantStub()
+        self.dequant = quantization.DeQuantStub()
     
     def forward(self, x):
         x = self.quant(x)
@@ -376,29 +393,33 @@ class QuantizedUNetFormer(UNetFormer):
         x = self.dequant(x)
         return x
 
-# define calibration
+# define calbiration
 def calibrate(model, data_loader):
     model.eval()
     with torch.no_grad():
         for inputs in data_loader:
             model(inputs)
 
-# instantiate the quantized model and set it to eval mode
+# instantiate the quantized model and fuse it
+# perform a static quantization
+# (although dynamic quantization best fits this model, it is unprovided in Pytorch for this model architecture)
 model = QuantizedUNetFormer()
 model.eval()
 
-# dynamic quantization doesn't need fusing
 model.qconfig = torch.quantization.get_default_qconfig('fbgemm')
+
 torch.quantization.prepare(model, inplace=True)
 
 # calibrate the model with random data
+# (in practice, representative dataset is desired for calibration)
 calibration_data_loader = [torch.rand(1, 3, 224, 224) for _ in range(10)]
 calibrate(model, calibration_data_loader)
 
-# convert the model to quantized version
+# here is your quantized model!
 torch.quantization.convert(model, inplace=True)
 
 # Test the quantized model
+# (in practice, test the model with actual test data)
 example_input = torch.rand(1, 3, 224, 224)
 output = model(example_input)
 print(output)
