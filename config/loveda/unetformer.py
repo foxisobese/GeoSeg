@@ -1,7 +1,7 @@
 from torch.utils.data import DataLoader
 from geoseg.losses import *
 from geoseg.datasets.loveda_dataset import *
-from geoseg.models.UNetFormer import QuantizedUNetFormer, calibrate
+from geoseg.models.UNetFormer import UNetFormer, QuantizedUNetFormer, calibrate
 from catalyst.contrib.nn import Lookahead
 from catalyst import utils
 import torch.quantization as quantization
@@ -61,16 +61,24 @@ def train_aug(img, mask):
     return img, mask
 
 train_dataset = LoveDATrainDataset(transform=train_aug, data_root='data/LoveDA/Train')
-
 val_dataset = loveda_val_dataset
-
 test_dataset = LoveDATestDataset()
 
-train_loader = DataLoader(dataset=train_dataset, batch_size=train_batch_size, num_workers=4, pin_memory=True, shuffle=True, drop_last=True)
+train_loader = DataLoader(dataset=train_dataset,
+                          batch_size=train_batch_size,
+                          num_workers=4,
+                          pin_memory=True,
+                          shuffle=True,
+                          drop_last=True)
 
-val_loader = DataLoader(dataset=val_dataset, batch_size=val_batch_size, num_workers=4, shuffle=False, pin_memory=True, drop_last=False)
+val_loader = DataLoader(dataset=val_dataset,
+                        batch_size=val_batch_size,
+                        num_workers=4,
+                        shuffle=False,
+                        pin_memory=True,
+                        drop_last=False)
 
-# Quantization steps (without fusion)
+# Quantization
 net.qconfig = torch.quantization.get_default_qconfig('fbgemm')
 torch.quantization.prepare(net, inplace=True)
 
@@ -80,7 +88,7 @@ calibrate(net, train_loader)
 # Convert to a quantized model
 torch.quantization.convert(net, inplace=True)
 
-# Define the optimizer
+# define the optimizer
 layerwise_params = {"backbone.*": dict(lr=backbone_lr, weight_decay=backbone_weight_decay)}
 net_params = utils.process_model_params(net, layerwise_params=layerwise_params)
 base_optimizer = torch.optim.AdamW(net_params, lr=lr, weight_decay=weight_decay)
