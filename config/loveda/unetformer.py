@@ -1,9 +1,17 @@
 from torch.utils.data import DataLoader
 from geoseg.losses import *
 from geoseg.datasets.loveda_dataset import *
-from geoseg.models.UNetFormer import UNetFormer
+from geoseg.models.UNetFormer import UNetFormer, QuantizedUNetFormer, fuse_model, calibrate
 from catalyst.contrib.nn import Lookahead
 from catalyst import utils
+import torch.quantization as quantization
+import torch
+import torch.nn.functional as F
+import numpy as np
+import albumentations as albu
+from albumentations.pytorch import ToTensorV2
+from tqdm import tqdm
+import os
 
 # training hparam
 max_epoch = 30
@@ -30,14 +38,11 @@ pretrained_ckpt_path = None # the path for the pretrained model weight
 gpus = 'auto'  # default or gpu ids:[0] or gpu nums: 2, more setting can refer to pytorch_lightning
 resume_ckpt_path = None  # whether continue training with the checkpoint, default None
 
-#  define the network
-net = UNetFormer(num_classes=num_classes)
+#  define the network, loss + dataloader
+net = QuantizedUNetFormer(num_classes=num_classes)
 
-# define the loss
 loss = UnetFormerLoss(ignore_index=ignore_index)
 use_aux_loss = True
-
-# define the dataloader
 
 def get_training_transform():
     train_transform = [
@@ -77,6 +82,17 @@ val_loader = DataLoader(dataset=val_dataset,
                         pin_memory=True,
                         drop_last=False)
 
+# Quantization
+fuse_model(net)
+net.qconfig = torch.quantization.get_default_qconfig('fbgemm')
+torch.quantization.prepare(net, inplace=True)
+
+# Calibration (with the training data loader)
+calibrate(net, train_loader)
+
+# Convert to a quantized model
+torch.quantization.convert(net, inplace=True)
+
 # define the optimizer
 layerwise_params = {"backbone.*": dict(lr=backbone_lr, weight_decay=backbone_weight_decay)}
 net_params = utils.process_model_params(net, layerwise_params=layerwise_params)
@@ -84,3 +100,62 @@ base_optimizer = torch.optim.AdamW(net_params, lr=lr, weight_decay=weight_decay)
 optimizer = Lookahead(base_optimizer)
 lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=max_epoch, eta_min=1e-6)
 
+# Training loop, evaluation, and checkpointing (PLZ make this work)
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+net.to(device)
+
+best_miou = 0
+
+for epoch in range(max_epoch):
+    net.train()
+    train_loss = 0
+    train_loader = tqdm(train_loader, desc=f"Epoch {epoch+1}/{max_epoch}")
+    
+    for batch in train_loader:
+        images, masks = batch
+        images, masks = images.to(device), masks.to(device)
+
+        optimizer.zero_grad()
+        outputs = net(images)
+        if use_aux_loss:
+            outputs, aux = outputs
+            loss_value = loss(outputs, masks) + 0.4 * loss(aux, masks)
+        else:
+            loss_value = loss(outputs, masks)
+
+        loss_value.backward()
+        optimizer.step()
+        train_loss += loss_value.item()
+
+    lr_scheduler.step()
+
+    net.eval()
+    val_loss = 0
+    miou = 0
+
+    with torch.no_grad():
+        for batch in val_loader:
+            images, masks = batch
+            images, masks = images.to(device), masks.to(device)
+
+            outputs = net(images)
+            if use_aux_loss:
+                outputs, aux = outputs
+                loss_value = loss(outputs, masks) + 0.4 * loss(aux, masks)
+            else:
+                loss_value = loss(outputs, masks)
+
+            val_loss += loss_value.item()
+            miou += compute_miou(outputs, masks, num_classes, ignore_index)  # Compute mIoU, assuming you have a function for this
+
+    val_loss /= len(val_loader)
+    miou /= len(val_loader)
+
+    print(f"Epoch {epoch+1}/{max_epoch}, Train Loss: {train_loss/len(train_loader)}, Val Loss: {val_loss}, Val mIoU: {miou}")
+
+    if miou > best_miou:
+        best_miou = miou
+        torch.save(net.state_dict(), os.path.join(weights_path, f"{weights_name}_best.pth"))
+
+    if save_last:
+        torch.save(net.state_dict(), os.path.join(weights_path, f"{weights_name}_last.pth"))
