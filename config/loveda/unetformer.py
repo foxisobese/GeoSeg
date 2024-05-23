@@ -1,7 +1,7 @@
 from torch.utils.data import DataLoader
 from geoseg.losses import *
 from geoseg.datasets.loveda_dataset import *
-from geoseg.models.UNetFormer import UNetFormer, QuantizedUNetFormer, calibrate
+from geoseg.models.UNetFormer import QuantizedUNetFormer, calibrate
 from catalyst.contrib.nn import Lookahead
 from catalyst import utils
 import torch.quantization as quantization
@@ -138,7 +138,6 @@ for epoch in range(max_epoch):
     val_loss /= len(val_loader)
     miou /= len(val_loader)
 
-    # test output
     print(f"Epoch {epoch+1}/{max_epoch}, Train Loss: {train_loss/len(train_loader)}, Val Loss: {val_loss}, Val mIoU: {miou}")
 
     if miou > best_miou:

@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from einops import rearrange
-from timm.models.layers import DropPath, to_2tuple, trunc_normal_
+from timm.models.layers import DropPath, trunc_normal_
 import timm
 import torch.quantization as quantization
 
@@ -315,7 +315,7 @@ class QuantizedUNetFormer(UNetFormer):
         super(QuantizedUNetFormer, self).__init__(*args, **kwargs)
         self.quant = quantization.QuantStub()
         self.dequant = quantization.DeQuantStub()
-    
+
     def forward(self, x):
         x = self.quant(x)
         x = super(QuantizedUNetFormer, self).forward(x)
@@ -330,7 +330,7 @@ def calibrate(model, data_loader):
             model(inputs)
 
 # instantiate the quantized model and prepare for static quantization
-model = QuantizedUNetFormer()
+model = QuantizedUNetFormer(num_classes=6)
 model.eval()
 model.qconfig = torch.quantization.get_default_qconfig('fbgemm')
 torch.quantization.prepare(model, inplace=True)
