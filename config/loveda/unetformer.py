@@ -128,4 +128,22 @@ for epoch in range(max_epoch):
             outputs = net(images)
             if use_aux_loss:
                 outputs, aux = outputs
-                loss_value = loss(outputs, masks) +
+                loss_value = loss(outputs, masks) + 0.4 * loss(aux, masks)
+            else:
+                loss_value = loss(outputs, masks)
+
+            val_loss += loss_value.item()
+            miou += compute_miou(outputs, masks, num_classes, ignore_index)  # Compute mIoU, assuming you have a function for this
+
+    val_loss /= len(val_loader)
+    miou /= len(val_loader)
+
+    # test output
+    print(f"Epoch {epoch+1}/{max_epoch}, Train Loss: {train_loss/len(train_loader)}, Val Loss: {val_loss}, Val mIoU: {miou}")
+
+    if miou > best_miou:
+        best_miou = miou
+        torch.save(net.state_dict(), os.path.join(weights_path, f"{weights_name}_best.pth"))
+
+    if save_last:
+        torch.save(net.state_dict(), os.path.join(weights_path, f"{weights_name}_last.pth"))
